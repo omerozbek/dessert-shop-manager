@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#f97316"/>
+  <!-- Cake base tier -->
+  <rect x="96" y="300" width="320" height="140" rx="20" fill="white"/>
+  <!-- Cake middle tier -->
+  <rect x="136" y="200" width="240" height="110" rx="16" fill="#fff7ed"/>
+  <!-- Cake top tier -->
+  <rect x="176" y="120" width="160" height="90" rx="12" fill="white"/>
+  <!-- Frosting drips on base -->
+  <path d="M96 320 Q116 300 136 320 Q156 340 176 320 Q196 300 216 320 Q236 340 256 320 Q276 300 296 320 Q316 340 336 320 Q356 300 376 320 Q396 340 416 320" stroke="#fed7aa" stroke-width="8" fill="none" stroke-linecap="round"/>
+  <!-- Frosting drips on middle -->
+  <path d="M136 218 Q152 200 168 218 Q184 236 200 218 Q216 200 232 218 Q248 236 264 218 Q280 200 296 218 Q312 236 328 218 Q344 200 360 218" stroke="#fdba74" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <!-- Candle -->
+  <rect x="244" y="68" width="24" height="60" rx="6" fill="#fde68a"/>
+  <!-- Candle stripes -->
+  <rect x="244" y="80" width="24" height="6" rx="2" fill="#fbbf24" opacity="0.6"/>
+  <rect x="244" y="96" width="24" height="6" rx="2" fill="#fbbf24" opacity="0.6"/>
+  <rect x="244" y="112" width="24" height="6" rx="2" fill="#fbbf24" opacity="0.6"/>
+  <!-- Flame -->
+  <ellipse cx="256" cy="56" rx="10" ry="14" fill="#fb923c"/>
+  <ellipse cx="256" cy="58" rx="5" ry="8" fill="#fef08a"/>
+  <!-- Decoration dots on base -->
+  <circle cx="160" cy="355" r="10" fill="#fb923c"/>
+  <circle cx="200" cy="355" r="10" fill="#fdba74"/>
+  <circle cx="256" cy="355" r="10" fill="#fb923c"/>
+  <circle cx="312" cy="355" r="10" fill="#fdba74"/>
+  <circle cx="352" cy="355" r="10" fill="#fb923c"/>
+  <!-- Decoration dots on middle -->
+  <circle cx="196" cy="250" r="8" fill="#f97316"/>
+  <circle cx="256" cy="250" r="8" fill="#f97316"/>
+  <circle cx="316" cy="250" r="8" fill="#f97316"/>
+</svg>
