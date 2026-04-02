@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, setSetting, updateIngredient } from '../db/database'
 import { CURRENCIES, fmtDate } from '../utils/calculations'
@@ -11,6 +11,10 @@ export default function Settings() {
   const toast = useToast()
   const [clearConfirm, setClearConfirm] = useState(false)
   const [priceModalOpen, setPriceModalOpen] = useState(false)
+  const [importConfirm, setImportConfirm] = useState(false)
+  const [pendingImport, setPendingImport] = useState(null)
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef(null)
 
   const settingsRows = useLiveQuery(() => db.settings.toArray(), [])
 
@@ -49,6 +53,150 @@ export default function Settings() {
     await db.orders.clear()
     toast.success('Tüm veriler silindi')
     setClearConfirm(false)
+  }
+
+  async function exportData() {
+    try {
+      const [ingredients, recipes, orders, settings] = await Promise.all([
+        db.ingredients.toArray(),
+        db.recipes.toArray(),
+        db.orders.toArray(),
+        db.settings.toArray(),
+      ])
+      const backup = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        ingredients,
+        recipes,
+        orders,
+        settings,
+      }
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `dulci-yedek-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success('Yedek dosyası indirildi')
+    } catch {
+      toast.error('Dışa aktarma başarısız')
+    }
+  }
+
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    try {
+      const text = await file.text()
+      const json = JSON.parse(text)
+      setPendingImport(json)
+      setImportConfirm(true)
+    } catch {
+      toast.error('Geçersiz JSON dosyası')
+    }
+  }
+
+  async function doImport() {
+    if (!pendingImport) return
+    setImporting(true)
+    setImportConfirm(false)
+    try {
+      if (pendingImport.version === 1 && Array.isArray(pendingImport.ingredients)) {
+        await importNative(pendingImport)
+      } else if (pendingImport.ingredients) {
+        await importLegacy(pendingImport)
+      } else {
+        toast.error('Tanımlanamayan dosya formatı')
+      }
+    } catch (err) {
+      toast.error('İçe aktarma başarısız: ' + err.message)
+    } finally {
+      setImporting(false)
+      setPendingImport(null)
+    }
+  }
+
+  async function importNative(backup) {
+    await db.ingredients.clear()
+    await db.recipes.clear()
+    await db.orders.clear()
+    await db.ingredients.bulkPut(backup.ingredients || [])
+    await db.recipes.bulkPut(backup.recipes || [])
+    await db.orders.bulkPut(backup.orders || [])
+    if (backup.settings) await db.settings.bulkPut(backup.settings)
+    toast.success(`${(backup.ingredients || []).length} malzeme, ${(backup.recipes || []).length} tarif içe aktarıldı`)
+  }
+
+  async function importLegacy(data) {
+    await db.ingredients.clear()
+    await db.recipes.clear()
+    await db.orders.clear()
+    const now = new Date().toISOString()
+    const nameToId = {}
+
+    for (const ing of data.ingredients || []) {
+      const amount = parseFloat(ing.amount) || 1
+      const pricePerUnit = parseFloat(ing.price) / amount
+      const id = await db.ingredients.add({
+        name: ing.name, unit: ing.unit,
+        pricePerUnit,
+        priceHistory: [{ price: pricePerUnit, date: now }],
+        createdAt: now, updatedAt: now,
+      })
+      nameToId[ing.name] = id
+    }
+
+    const recipeNameToId = {}
+    const allRecipes = [...(data.desserts || []), ...(data.saltys || [])]
+    for (const recipe of allRecipes) {
+      const ingredients = (recipe.ingredients || [])
+        .map(ri => nameToId[ri.name] ? { ingredientId: nameToId[ri.name], quantity: ri.amount } : null)
+        .filter(Boolean)
+      const id = await db.recipes.add({
+        name: recipe.name, ingredients,
+        notes: recipe.extra_info || '',
+        createdAt: now, updatedAt: now,
+      })
+      recipeNameToId[recipe.name] = id
+    }
+
+    const allOrders = [
+      ...(data.orders || []).map(o => ({ ...o, _fromHistory: false })),
+      ...(data.order_history || []).map(o => ({ ...o, _fromHistory: true })),
+    ]
+    for (const order of allOrders) {
+      const allItems = [...(order.desserts || []), ...(order.saltys || [])]
+      if (!allItems.length) continue
+      const totalCostRaw = allItems.reduce((s, i) => s + (i.total_price || 0), 0)
+      const salePrice = order._fromHistory ? (order.sale_price || totalCostRaw) : totalCostRaw
+      const ratio = totalCostRaw > 0 ? salePrice / totalCostRaw : 1
+      const items = allItems.map(item => {
+        const costPerUnit = (item.total_price || 0) / (item.quantity || 1)
+        return {
+          recipeId: recipeNameToId[item.name] || null,
+          recipeName: item.name,
+          quantity: item.quantity || 1,
+          pricePerUnit: order._fromHistory ? costPerUnit * ratio : costPerUnit,
+          costPerUnit,
+        }
+      })
+      const totalCost = items.reduce((s, i) => s + i.costPerUnit * i.quantity, 0)
+      const totalPrice = items.reduce((s, i) => s + i.pricePerUnit * i.quantity, 0)
+      const createdAt = order.delivery_time ? new Date(order.delivery_time + 'T12:00:00').toISOString() : now
+      await db.orders.add({
+        items, totalPrice, totalCost,
+        notes: order.customer || '',
+        status: order._fromHistory ? 'sold' : 'pending',
+        createdAt, updatedAt: now,
+        ...(order._fromHistory ? { soldAt: createdAt } : {}),
+      })
+    }
+
+    toast.success(`${Object.keys(nameToId).length} malzeme, ${Object.keys(recipeNameToId).length} tarif içe aktarıldı`)
   }
 
   const stats = useLiveQuery(async () => {
@@ -173,6 +321,22 @@ export default function Settings() {
             Tüm veriler cihazınızda IndexedDB üzerinde yerel olarak saklanır. Hiçbir şey sunucuya gönderilmez.
           </p>
 
+          <div className="flex gap-3">
+            <button onClick={exportData} className="btn-secondary flex-1">
+              <ExportIcon /> Yedeği Dışa Aktar
+            </button>
+            <button onClick={() => fileInputRef.current?.click()} disabled={importing} className="btn-secondary flex-1">
+              <ImportIcon /> {importing ? 'Yükleniyor…' : 'Yedekten Yükle'}
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={handleImportFile}
+          />
+
           <button
             onClick={() => setClearConfirm(true)}
             className="btn-danger w-full"
@@ -216,6 +380,15 @@ export default function Settings() {
         title="Tüm veriler silinsin mi?"
         message="Bu işlem tüm malzemeleri, tarifleri ve siparişleri kalıcı olarak siler. Geri alınamaz."
         confirmLabel="Tümünü Sil"
+      />
+
+      <ConfirmDialog
+        open={importConfirm}
+        onConfirm={doImport}
+        onCancel={() => { setImportConfirm(false); setPendingImport(null) }}
+        title="Veriler içe aktarılsın mı?"
+        message="Mevcut tüm malzeme, tarif ve siparişler silinerek dosyadaki verilerle değiştirilecek. Bu işlem geri alınamaz."
+        confirmLabel="İçe Aktar"
       />
 
       <BulkPriceModal
@@ -448,3 +621,5 @@ function InfoIcon() { return <svg className="w-4 h-4" fill="none" viewBox="0 0 2
 function RefreshIcon() { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> }
 function SpinIcon() { return <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> }
 function TrashIcon() { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> }
+function ExportIcon() { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg> }
+function ImportIcon() { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12"/></svg> }
