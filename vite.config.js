@@ -2,7 +2,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// When deploying to GitHub Pages the site lives at /<repo-name>/.
+// Set VITE_BASE env var to your repo name, e.g. VITE_BASE=dulci-pwa
+// For local dev or a custom domain (apex), leave it unset → base stays '/'.
+const base = process.env.VITE_BASE ? `/${process.env.VITE_BASE}/` : '/'
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -16,8 +22,8 @@ export default defineConfig({
         background_color: '#fafaf9',
         display: 'standalone',
         orientation: 'portrait-primary',
-        start_url: '/',
-        scope: '/',
+        start_url: base,
+        scope: base,
         categories: ['business', 'food'],
         icons: [
           {
